@@ -16,45 +16,92 @@
 
 import six
 import os
-import yaml
+import ruamel.yaml as yaml
 import datetime
 import logbook
+import locale
 from pprint import pformat
 import codecs
+import shutil
 
 from . import RqAttrDict, logger
 from .exception import patch_user_exc
 from .logger import user_log, user_system_log, system_log, std_log, user_std_handler
 from ..const import ACCOUNT_TYPE, MATCHING_TYPE, RUN_TYPE, PERSIST_MODE
-from ..utils.i18n import gettext as _
+from ..utils.i18n import gettext as _, localization
 from ..utils.dict_func import deep_update
 from ..mod.utils import mod_config_value_parse
 
 
-def parse_config(config_args, base_config_path=None, click_type=True, source_code=None):
-    if base_config_path is None:
-        config_path = os.path.abspath(os.path.expanduser("~/.rqalpha/config.yml"))
-        if not os.path.exists(config_path):
-            dir_path = os.path.dirname(config_path)
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
-            default_config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../config_template.yml")
-            open(config_path, "wb").write(open(default_config_path, "rb").read())
-    else:
-        config_path = base_config_path
+def load_config(config_path, loader=yaml.Loader, verify_version=True):
     if not os.path.exists(config_path):
-        print("config.yaml not found in", os.getcwd())
-        return
+        system_log.error(_("config.yml not found in {config_path}").format(config_path))
+        return False
+    with codecs.open(config_path, encoding="utf-8") as stream:
+        config = yaml.load(stream, loader)
+    if verify_version:
+        config = config_version_verify(config, config_path)
+    return config
 
-    with codecs.open(config_path, encoding="utf-8") as f:
-        config_file = f.read()
 
+def dump_config(config_path, config, dumper=yaml.RoundTripDumper):
+    with codecs.open(config_path, mode='w', encoding='utf-8') as file:
+        file.write(yaml.dump(config, Dumper=dumper))
+
+
+def get_default_config_path():
+    config_template_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../config_template.yml")
+    default_config_path = os.path.abspath(os.path.expanduser("~/.rqalpha/config.yml"))
+    if not os.path.exists(default_config_path):
+        dir_path = os.path.dirname(default_config_path)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        shutil.copy(config_template_path, default_config_path)
+    return default_config_path
+
+
+def config_version_verify(config, config_path):
+    config_template_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../config_template.yml")
+    default_config = load_config(config_template_path, verify_version=False)
+    config_version = config.get("version", None)
+    if config_version != default_config["version"]:
+        back_config_file_path = config_path + "." + datetime.datetime.now().date().strftime("%Y%m%d") + ".bak"
+        shutil.move(config_path, back_config_file_path)
+        shutil.copy(config_template_path, config_path)
+
+        system_log.warning(_("""
+Your current config file {config_file_path} is too old and may cause RQAlpha running error.
+RQAlpha has replaced the config file with the newest one.
+the backup config file has been saved in {back_config_file_path}.
+        """).format(config_file_path=config_path, back_config_file_path=back_config_file_path))
+        config = default_config
+    return config
+
+
+def set_locale(lc):
+    # FIXME: It should depends on the system and locale config
+    try:
+        locale.setlocale(locale.LC_ALL, "en_US.UTF-8")
+        locale.setlocale(locale.LC_CTYPE, "en_US.UTF-8")
+        os.environ['TZ'] = 'Asia/Shanghai'
+    except Exception as e:
+        if os.name != 'nt':
+            raise
+    localization.set_locale([lc])
+
+
+def parse_config(config_args, config_path=None, click_type=True, source_code=None):
     mod_configs = config_args.pop("mod_configs", [])
     for cfg, value in mod_configs:
         key = "mod__{}".format(cfg.replace(".", "__"))
         config_args[key] = mod_config_value_parse(value)
 
-    config = yaml.load(config_file)
+    set_locale(config_args.get("extra__locale", None))
+
+    config_path = get_default_config_path() if config_path is None else os.path.abspath(config_path)
+
+    config = load_config(config_path)
+
     if click_type:
         for key, value in six.iteritems(config_args):
             if key in ["config_path"]:
@@ -77,8 +124,11 @@ def parse_config(config_args, base_config_path=None, click_type=True, source_cod
     config = parse_user_config(config, source_code)
 
     config = RqAttrDict(config)
+
     base_config = config.base
     extra_config = config.extra
+
+    set_locale(extra_config.locale)
 
     if isinstance(base_config.start_date, six.string_types):
         base_config.start_date = datetime.datetime.strptime(base_config.start_date, "%Y-%m-%d")
@@ -102,12 +152,14 @@ def parse_config(config_args, base_config_path=None, click_type=True, source_cod
         base_config.data_bundle_path = os.path.join(base_config.data_bundle_path, "./bundle")
 
     if not os.path.exists(base_config.data_bundle_path):
-        print("data bundle not found. Run `rqalpha update_bundle` to download data bundle.")
-        # print("data bundle not found. Run `%s update_bundle` to download data bundle." % sys.argv[0])
+        system_log.error(
+            _("data bundle not found in {bundle_path}. Run `rqalpha update_bundle` to download data bundle.").format(
+                bundle_path=base_config.data_bundle_path))
         return
 
     if source_code is None and not os.path.exists(base_config.strategy_file):
-        print("strategy file not found: ", base_config.strategy_file)
+        system_log.error(
+            _("strategy file not found in {strategy_file}").format(strategy_file=base_config.strategy_file))
         return
 
     base_config.run_type = parse_run_type(base_config.run_type)
@@ -141,7 +193,6 @@ def parse_config(config_args, base_config_path=None, click_type=True, source_cod
 
     if base_config.frequency == "1d":
         logger.DATETIME_FORMAT = "%Y-%m-%d"
-        config.validator.fast_match = True
 
     system_log.debug("\n" + pformat(config))
 
@@ -169,7 +220,7 @@ def parse_user_config(config, source_code=None):
             deep_update(sub_dict, config[sub_key])
 
     except Exception as e:
-        print('in parse_user_config, exception: ', e)
+        system_log.error(_('in parse_user_config, exception: {e}').format(e=e))
     finally:
         return config
 
@@ -217,4 +268,4 @@ def parse_persist_mode(persist_mode):
     elif persist_mode == 'on_crash':
         return PERSIST_MODE.ON_CRASH
     else:
-        raise RuntimeError('unknown persist mode: {}'.format(persist_mode))
+        raise RuntimeError(_('unknown persist mode: {persist_mode}').format(persist_mode=persist_mode))

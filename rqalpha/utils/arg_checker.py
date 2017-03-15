@@ -22,28 +22,19 @@ import pandas as pd
 from functools import wraps
 
 from dateutil.parser import parse as parse_date
-from sqlalchemy.orm.attributes import InstrumentedAttribute
 
-from .exception import RQUserError
+from .exception import RQInvalidArgument, RQTypeError
 from ..execution_context import ExecutionContext
 from ..model.instrument import Instrument
 from ..environment import Environment
 from ..const import INSTRUMENT_TYPE, RUN_TYPE
-from ..utils import INST_TYPE_IN_STOCK_ACCOUNT
+from ..utils import unwrapper, INST_TYPE_IN_STOCK_ACCOUNT
 from ..utils.i18n import gettext as _
 from ..utils.logger import user_system_log
 
 
 main_contract_warning_flag = True
 index_contract_warning_flag = True
-
-
-class RQInvalidArgument(RQUserError):
-    pass
-
-
-class RQTypeError(RQUserError):
-    pass
 
 
 class ArgumentChecker(object):
@@ -298,6 +289,7 @@ class ArgumentChecker(object):
         return self
 
     def _are_valid_query_entities(self, func_name, entities):
+        from sqlalchemy.orm.attributes import InstrumentedAttribute
         for e in entities:
             if not isinstance(e, InstrumentedAttribute):
                 raise RQInvalidArgument(
@@ -348,12 +340,14 @@ def apply_rules(*rules):
         def api_rule_check_wrapper(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
+            except RQInvalidArgument:
+                raise
             except Exception:
                 exc_info = sys.exc_info()
                 t, v, tb = exc_info
 
                 try:
-                    call_args = inspect.getcallargs(inspect.unwrap(func), *args, **kwargs)
+                    call_args = inspect.getcallargs(unwrapper(func), *args, **kwargs)
                 except TypeError as e:
                     raise RQTypeError(*e.args).with_traceback(tb)
 

@@ -29,7 +29,7 @@ from .trading_dates_mixin import TradingDatesMixin
 from ..model.bar import BarObject
 from ..model.snapshot import SnapshotObject
 from ..utils.datetime_func import convert_int_to_datetime
-from ..utils import cache_control
+from ..const import HEDGE_TYPE
 
 
 class DataProxy(InstrumentMixin, TradingDatesMixin):
@@ -63,7 +63,7 @@ class DataProxy(InstrumentMixin, TradingDatesMixin):
         rate = yc.values[0, 0]
         return 0 if np.isnan(rate) else rate
 
-    @lru_cache(cache_control.get_entry_count(128))
+    @lru_cache(128)
     def get_dividend(self, order_book_id, adjusted=True):
         return self._data_source.get_dividend(order_book_id, adjusted)
 
@@ -80,7 +80,7 @@ class DataProxy(InstrumentMixin, TradingDatesMixin):
 
         return df.iloc[pos]
 
-    @lru_cache(cache_control.get_entry_count(10240))
+    @lru_cache(10240)
     def _get_prev_close(self, order_book_id, dt):
         prev_trading_date = self.get_previous_trading_date(dt)
         instrument = self.instruments(order_book_id)
@@ -92,7 +92,7 @@ class DataProxy(InstrumentMixin, TradingDatesMixin):
     def get_prev_close(self, order_book_id, dt):
         return self._get_prev_close(order_book_id, dt.replace(hour=0, minute=0, second=0))
 
-    @lru_cache(cache_control.get_entry_count(10240))
+    @lru_cache(10240)
     def _get_prev_settlement(self, instrument, dt):
         prev_trading_date = self.get_previous_trading_date(dt)
         bar = self._data_source.history_bars(instrument, 1, '1d', 'settlement', prev_trading_date, False)
@@ -147,3 +147,6 @@ class DataProxy(InstrumentMixin, TradingDatesMixin):
 
     def available_data_range(self, frequency):
         return self._data_source.available_data_range(frequency)
+
+    def get_future_info(self, order_book_id, hedge_type=HEDGE_TYPE.SPECULATION):
+        return self._data_source.get_future_info(order_book_id, hedge_type)

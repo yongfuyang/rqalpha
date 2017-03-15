@@ -94,7 +94,7 @@ class AnalyserMod(AbstractMod):
         if isinstance(value, Enum):
             return value.name
 
-        if isinstance(value, (float, np.float64, np.float32, np.float16, np.float128)):
+        if isinstance(value, (float, np.float64, np.float32, np.float16, np.float)):
             return round(value, ndigits)
 
         return value
@@ -121,12 +121,13 @@ class AnalyserMod(AbstractMod):
 
     def _to_position_record(self, date, order_book_id, position):
         data = {
-            k: self._safe_convert(v, 3) for k, v in six.iteritems(properties(position))
+            k: self._safe_convert(v, 3) for k, v in six.iteritems(position.__dict__)
             if not k.startswith('_') and not k.endswith('_')
             }
         data['order_book_id'] = order_book_id
         data['symbol'] = self._symbol(order_book_id)
         data['date'] = date
+        return data
 
     def _to_trade_record(self, trade):
         data = {
@@ -135,6 +136,8 @@ class AnalyserMod(AbstractMod):
         }
         data['order_book_id'] = trade.order.order_book_id
         data['symbol'] = self._symbol(trade.order.order_book_id)
+        data['side'] = self._safe_convert(trade.order.side)
+        data['position_effect'] = self._safe_convert(trade.order.position_effect)
         data['datetime'] = data['datetime'].strftime("%Y-%m-%d %H:%M:%S")
         data['trading_datetime'] = data['trading_datetime'].strftime("%Y-%m-%d %H:%M:%S")
         return data

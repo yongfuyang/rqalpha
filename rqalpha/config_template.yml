@@ -1,3 +1,5 @@
+version: 0.1.2
+
 # 白名单，设置可以直接在策略代码中指定哪些模块的配置项目
 whitelist: [base, extra, validator, mod]
 
@@ -53,6 +55,7 @@ extra:
   # enable_profiler: 是否启动性能分析
   enable_profiler: false
   is_hold: false
+  locale: zh_Hans_CN
 
 validator:
   # cash_return_by_stock_delisted: 开启该项，当持仓股票退市时，按照退市价格返还现金
@@ -100,6 +103,8 @@ mod:
     available_cash: true
     # available_position: 检查可平仓位是否充足，默认开启
     available_position: true
+    # short_stock: 允许裸卖空
+    short_stock: false
   analyser:
     priority: 100
     enabled: true

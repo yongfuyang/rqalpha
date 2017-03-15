@@ -124,7 +124,7 @@ class StockAccount(BaseAccount):
             return
         order_book_id = order.order_book_id
         position = self.portfolio.positions[order_book_id]
-        position._total_orders += 1
+        position._total_orders -= 1
         cancel_quantity = order.unfilled_quantity
         cancel_value = order._frozen_price * cancel_quantity
         self._update_order_data(order, cancel_quantity, cancel_value)
@@ -134,15 +134,21 @@ class StockAccount(BaseAccount):
         pass
 
     def order_cancellation_pass(self, account, order):
-        if self != account:
-            return
-        canceled_quantity = order.unfilled_quantity
-        canceled_value = order._frozen_price * canceled_quantity
-        self._update_order_data(order, -canceled_quantity, -canceled_value)
-        self._update_frozen_cash(order, -canceled_value)
+        self._cancel_order_cal(account, order)
 
     def order_cancellation_reject(self, account, order):
         pass
+
+    def order_unsolicited_update(self, account, order):
+        self._cancel_order_cal(account, order)
+
+    def _cancel_order_cal(self, account, order):
+        if self != account:
+            return
+        rejected_quantity = order.unfilled_quantity
+        rejected_value = order._frozen_price * rejected_quantity
+        self._update_order_data(order, -rejected_quantity, -rejected_value)
+        self._update_frozen_cash(order, -rejected_value)
 
     def trade(self, account, trade):
         if self != account:
@@ -181,13 +187,7 @@ class StockAccount(BaseAccount):
         else:
             portfolio._cash += trade_value
 
-    def order_unsolicited_update(self, account, order):
-        if self != account:
-            return
-        rejected_quantity = order.unfilled_quantity
-        rejected_value = order._frozen_price * rejected_quantity
-        self._update_order_data(order, -rejected_quantity, -rejected_value)
-        self._update_frozen_cash(order, -rejected_value)
+        self._last_trade_id = trade.exec_id
 
     def _update_order_data(self, order, inc_order_quantity, inc_order_value):
         position = self.portfolio.positions[order.order_book_id]
@@ -219,7 +219,7 @@ class StockAccount(BaseAccount):
         for order_book_id, position in six.iteritems(self.portfolio.positions):
             split_df = rqdatac.get_split(order_book_id, start_date="2005-01-01", end_date="2099-01-01")
             if split_df is None:
-                system_log.warn("no split data {}", order_book_id)
+                system_log.warn(_("no split data {}").foramt(order_book_id))
                 continue
             try:
                 series = split_df.loc[trading_date]
@@ -260,10 +260,6 @@ class StockAccount(BaseAccount):
                     dividend_cash = dividend_per_share * dividend_info.quantity
                     self.portfolio._dividend_receivable -= dividend_cash
                     self.portfolio._cash += dividend_cash
-                    # user_system_log.info(_("get dividend {dividend} for {order_book_id}").format(
-                    #     dividend=dividend_cash,
-                    #     order_book_id=order_book_id,
-                    # ))
                     to_delete_dividend.append(order_book_id)
 
         for order_book_id in to_delete_dividend:

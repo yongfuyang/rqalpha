@@ -36,8 +36,8 @@ from ..model.instrument import Instrument, SectorCode as sector_code, IndustryCo
 from ..model.instrument import SectorCodeItem, IndustryCodeItem
 from ..execution_context import ExecutionContext
 from ..const import EXECUTION_PHASE, EXC_TYPE, ORDER_STATUS, SIDE, POSITION_EFFECT, ORDER_TYPE, MATCHING_TYPE, RUN_TYPE
-from ..utils import to_industry_code, to_sector_name
-from ..utils.exception import patch_user_exc, patch_system_exc, EXC_EXT_NAME
+from ..utils import to_industry_code, to_sector_name, unwrapper
+from ..utils.exception import patch_user_exc, patch_system_exc, EXC_EXT_NAME, RQInvalidArgument
 from ..utils.i18n import gettext as _
 from ..model.snapshot import SnapshotObject
 from ..model.order import Order, MarketOrder, LimitOrder
@@ -83,11 +83,13 @@ def api_exc_patch(func):
         def deco(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
+            except RQInvalidArgument:
+                raise
             except Exception as e:
                 if isinstance(e, TypeError):
                     exc_info = sys.exc_info()
                     try:
-                        ret = inspect.getcallargs(inspect.unwrap(func), *args, **kwargs)
+                        ret = inspect.getcallargs(unwrapper(func), *args, **kwargs)
                     except TypeError:
                         t, v, tb = exc_info
                         raise patch_user_exc(v.with_traceback(tb))
@@ -120,7 +122,7 @@ def assure_order_book_id(id_or_ins):
     elif isinstance(id_or_ins, six.string_types):
         order_book_id = instruments(id_or_ins).order_book_id
     else:
-        raise patch_user_exc(KeyError(_("unsupported order_book_id type")))
+        raise RQInvalidArgument(_("unsupported order_book_id type"))
 
     return order_book_id
 
@@ -128,6 +130,7 @@ def assure_order_book_id(id_or_ins):
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 def get_order(order_id):
@@ -140,6 +143,7 @@ def get_order(order_id):
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 def get_open_orders():
@@ -154,6 +158,7 @@ def get_open_orders():
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 def cancel_order(order):
@@ -173,6 +178,7 @@ def cancel_order(order):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('id_or_symbols').are_valid_instruments())
@@ -194,6 +200,7 @@ def update_universe(id_or_symbols):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('id_or_symbols').are_valid_instruments())
@@ -216,7 +223,8 @@ def subscribe(id_or_symbols):
         for item in id_or_symbols:
             current_universe.add(assure_order_book_id(item))
     else:
-        raise patch_user_exc(KeyError(_("unsupported order_book_id type")))
+        raise RQInvalidArgument(_("unsupported order_book_id type"))
+    verify_that('id_or_symbols')._are_valid_instruments("subscribe", id_or_symbols)
     Environment.get_instance().update_universe(current_universe)
 
 
@@ -224,6 +232,7 @@ def subscribe(id_or_symbols):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('id_or_symbols').are_valid_instruments())
@@ -245,7 +254,7 @@ def unsubscribe(id_or_symbols):
             i = assure_order_book_id(item)
             current_universe.discard(i)
     else:
-        raise patch_user_exc(KeyError(_("unsupported order_book_id type")))
+        raise RQInvalidArgument(_("unsupported order_book_id type"))
 
     Environment.get_instance().update_universe(current_universe)
 
@@ -254,6 +263,7 @@ def unsubscribe(id_or_symbols):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('date').is_valid_date(ignore_none=True),
@@ -297,7 +307,7 @@ def get_yield_curve(date=None, tenor=None):
     else:
         date = pd.Timestamp(date)
         if date > yesterday:
-            raise patch_user_exc(RuntimeError('get_yield_curve: {} >= now({})'.format(date, yesterday)))
+            raise RQInvalidArgument('get_yield_curve: {} >= now({})'.format(date, yesterday))
 
     return data_proxy.get_yield_curve(start_date=date, end_date=date, tenor=tenor)
 
@@ -305,6 +315,7 @@ def get_yield_curve(date=None, tenor=None):
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('order_book_id').is_valid_instrument(),
@@ -390,7 +401,7 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
     dt = ExecutionContext.get_current_calendar_dt()
 
     if frequency == '1m' and Environment.get_instance().config.base.frequency == '1d':
-        raise patch_user_exc(ValueError('can not get minute history in day back test'))
+        raise RQInvalidArgument('can not get minute history in day back test')
 
     if (Environment.get_instance().config.base.frequency == '1m' and frequency == '1d') or \
             (frequency == '1d' and ExecutionContext.get_active().phase == EXECUTION_PHASE.BEFORE_TRADING):
@@ -404,6 +415,7 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('type').is_in(names.VALID_INSTRUMENT_TYPES, ignore_none=True))
@@ -457,6 +469,7 @@ def all_instruments(type=None):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('id_or_symbols').is_instance_of((str, Iterable)))
@@ -512,6 +525,7 @@ def instruments(id_or_symbols):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('code').is_instance_of((str, SectorCodeItem)))
@@ -528,6 +542,7 @@ def sector(code):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('code').is_instance_of((str, IndustryCodeItem)))
@@ -544,6 +559,7 @@ def industry(code):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 def concept(*concept_names):
@@ -554,6 +570,7 @@ def concept(*concept_names):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('start_date').is_valid_date(ignore_none=False))
@@ -586,6 +603,7 @@ def get_trading_dates(start_date, end_date):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('date').is_valid_date(ignore_none=False))
@@ -614,6 +632,7 @@ def get_previous_trading_date(date):
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('date').is_valid_date(ignore_none=False))
@@ -647,14 +666,15 @@ def to_date(date):
             return date.date()
         except AttributeError:
             return date
-
-    raise patch_user_exc(ValueError('unknown date value: {}'.format(date)))
+    
+    raise RQInvalidArgument('unknown date value: {}'.format(date))
 
 
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_INIT,
                                 EXECUTION_PHASE.BEFORE_TRADING,
                                 EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('order_book_id').is_valid_instrument(),
@@ -664,10 +684,10 @@ def get_dividend(order_book_id, start_date, adjusted=True):
     dt = ExecutionContext.get_current_trading_dt().date() - datetime.timedelta(days=1)
     start_date = to_date(start_date)
     if start_date > dt:
-        raise patch_user_exc(
-            ValueError(_('in get_dividend, start_date {} is later than the previous test day {}').format(
+        raise RQInvalidArgument(
+            _('in get_dividend, start_date {} is later than the previous test day {}').format(
                 start_date, dt
-            )))
+            ))
     order_book_id = assure_order_book_id(order_book_id)
     df = ExecutionContext.data_proxy.get_dividend(order_book_id, adjusted)
     return df[start_date:dt]
@@ -675,6 +695,7 @@ def get_dividend(order_book_id, start_date, adjusted=True):
 
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('series_name').is_instance_of(str),
              verify_that('value').is_number())
@@ -694,6 +715,7 @@ def plot(series_name, value):
 
 @export_as_api
 @ExecutionContext.enforce_phase(EXECUTION_PHASE.ON_BAR,
+                                EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('id_or_symbol').is_valid_instrument())
 def current_snapshot(id_or_symbol):

@@ -16,14 +16,13 @@
 
 import click
 import errno
-import locale
 import os
 import shutil
+import ruamel.yaml as yaml
+from importlib import import_module
 
-from .utils.cache_control import set_cache_policy, CachePolicy
 from .utils.click_helper import Date
-from .utils.i18n import localization
-from .utils.config import parse_config
+from .utils.config import parse_config, get_default_config_path, load_config, dump_config
 
 
 @click.group()
@@ -39,64 +38,59 @@ def entry_point():
 
 @cli.command()
 @click.option('-d', '--data-bundle-path', default=os.path.expanduser("~/.rqalpha"), type=click.Path(file_okay=False))
-def update_bundle(data_bundle_path):
+@click.option('--locale', 'locale', type=click.STRING, default="zh_Hans_CN")
+def update_bundle(data_bundle_path, locale):
     """
     Sync Data Bundle
     """
     from . import main
-    main.update_bundle(data_bundle_path)
+    main.update_bundle(data_bundle_path, locale)
 
 
 @cli.command()
+@click.help_option('-h', '--help')
+# -- Base Configuration
 @click.option('-d', '--data-bundle-path', 'base__data_bundle_path', type=click.Path(exists=True))
 @click.option('-f', '--strategy-file', 'base__strategy_file', type=click.Path(exists=True))
 @click.option('-s', '--start-date', 'base__start_date', type=Date())
 @click.option('-e', '--end-date', 'base__end_date', type=Date())
 @click.option('-r', '--rid', 'base__run_id', type=click.STRING)
-@click.option('-i', '--init-cash', 'base__stock_starting_cash', type=click.FLOAT)
 @click.option('-sc', '--stock-starting-cash', 'base__stock_starting_cash', type=click.FLOAT)
 @click.option('-fc', '--future-starting-cash', 'base__future_starting_cash', type=click.FLOAT)
 @click.option('-bm', '--benchmark', 'base__benchmark', type=click.STRING, default=None)
 @click.option('-sp', '--slippage', 'base__slippage', type=click.FLOAT)
 @click.option('-cm', '--commission-multiplier', 'base__commission_multiplier', type=click.FLOAT)
 @click.option('-mm', '--margin-multiplier', 'base__margin_multiplier', type=click.FLOAT)
-@click.option('-k', '--kind', 'base__strategy_type', type=click.Choice(['stock', 'future', 'stock_future']))
 @click.option('-st', '--strategy-type', 'base__strategy_type', type=click.Choice(['stock', 'future', 'stock_future']))
 @click.option('-fq', '--frequency', 'base__frequency', type=click.Choice(['1d', '1m']))
 @click.option('-me', '--match-engine', 'base__matching_type', type=click.Choice(['current_bar', 'next_bar']))
 @click.option('-rt', '--run-type', 'base__run_type', type=click.Choice(['b', 'p']), default="b")
 @click.option('--resume', 'base__resume_mode', is_flag=True)
 @click.option('--handle-split/--not-handle-split', 'base__handle_split', default=None, help="handle split")
-@click.option('--disable-user-system-log', 'extra__user_system_log_disabled', is_flag=True, help='disable user system log')
+# -- Extra Configuration
 @click.option('-l', '--log-level', 'extra__log_level', type=click.Choice(['verbose', 'debug', 'info', 'error', 'none']))
+@click.option('--locale', 'extra__locale', type=click.Choice(['cn', 'en']), default="cn")
+@click.option('--disable-user-system-log', 'extra__user_system_log_disabled', is_flag=True, help='disable user system log')
+@click.option('--extra-vars', 'extra__context_vars', type=click.STRING, help="override context vars")
+@click.option("--enable-profiler", "extra__enable_profiler", is_flag=True,
+              help="add line profiler to profile your strategy")
+@click.option('--config', 'config_path', type=click.STRING, help="config file path")
+# -- Mod Configuration
+@click.option('-mc', '--mod-config', 'mod_configs', nargs=2, multiple=True, type=click.STRING, help="mod extra config")
 @click.option('-p', '--plot/--no-plot', 'mod__analyser__plot', default=None, help="plot result")
 @click.option('--plot-save', 'mod__analyser__plot_save_file', default=None, help="save plot to file")
 @click.option('--report', 'mod__analyser__report_save_path', type=click.Path(writable=True), help="save report")
 @click.option('-o', '--output-file', 'mod__analyser__output_file', type=click.Path(writable=True),
               help="output result pickle file")
 @click.option('--progress/--no-progress', 'mod__progress__enabled', default=None, help="show progress bar")
-@click.option('--extra-vars', 'extra__context_vars', type=click.STRING, help="override context vars")
-@click.option("--enable-profiler", "extra__enable_profiler", is_flag=True,
-              help="add line profiler to profile your strategy")
-@click.option('--config', 'config_path', type=click.STRING, help="config file path")
-@click.option('-mc', '--mod-config', 'mod_configs', nargs=2, multiple=True, type=click.STRING, help="mod extra config")
-@click.help_option('-h', '--help')
+@click.option('--short-stock', 'mod__risk_manager__short_stock', is_flag=True, help="enable stock shorting")
+# -- DEPRECATED ARGS && WILL BE REMOVED AFTER VERSION 1.0.0
+@click.option('-i', '--init-cash', 'base__stock_starting_cash', type=click.FLOAT)
+@click.option('-k', '--kind', 'base__strategy_type', type=click.Choice(['stock', 'future', 'stock_future']))
 def run(**kwargs):
     """
     Start to run a strategy
     """
-    if kwargs.get('base__run_type') == 'p':
-        set_cache_policy(CachePolicy.MINIMUM)
-
-    try:
-        locale.setlocale(locale.LC_ALL, "en_US.UTF-8")
-        locale.setlocale(locale.LC_CTYPE, "en_US.UTF-8")
-        os.environ['TZ'] = 'Asia/Shanghai'
-        localization.set_locale(["zh_Hans_CN"])
-    except Exception as e:
-        if os.name != 'nt':
-            raise
-
     config_path = kwargs.get('config_path', None)
     if config_path is not None:
         config_path = os.path.abspath(config_path)
@@ -172,6 +166,169 @@ def generate_config(directory):
     target_config_path = os.path.abspath(os.path.join(directory, 'config.yml'))
     shutil.copy(default_config, target_config_path)
     print("Config file has been generated in", target_config_path)
+
+
+# For Mod Cli
+
+system_mod = [
+    'simulation',
+    'funcat_api',
+    'progress',
+    'simple_stock_realtime_trade',
+    'progressive_output_csv',
+    'risk_manager',
+    'analyser',
+]
+
+
+@cli.command(context_settings=dict(
+    ignore_unknown_options=True,
+))
+@click.argument('params', nargs=-1)
+def install(params):
+    """
+    Install third-party Mod
+    """
+    from pip import main as pip_main
+    from pip.commands.install import InstallCommand
+
+    params = [param for param in params]
+
+    options, mod_list = InstallCommand().parse_args(params)
+
+    params = ["install"] + params
+
+    for mod_name in mod_list:
+        mod_name_index = params.index(mod_name)
+        if mod_name in system_mod:
+            print('System Mod can not be installed or uninstalled')
+            return
+        if "rqalpha_mod_" in mod_name:
+            lib_name = mod_name
+            mod_name = lib_name.replace("rqalpha_mod_", "")
+        else:
+            lib_name = "rqalpha_mod_" + mod_name
+        params[mod_name_index] = lib_name
+
+    # Install Mod
+    pip_main(params)
+
+    # Export config
+    config_path = get_default_config_path()
+    config = load_config(config_path, loader=yaml.RoundTripLoader)
+
+    for mod_name in mod_list:
+        if "rqalpha_mod_" in mod_name:
+            lib_name = mod_name
+            mod_name = lib_name.replace("rqalpha_mod_", "")
+        else:
+            lib_name = "rqalpha_mod_" + mod_name
+
+        mod = import_module(lib_name)
+
+        mod_config = yaml.load(mod.__mod_config__, yaml.RoundTripLoader)
+
+        config['mod'][mod_name] = mod_config
+        config['mod'][mod_name]['lib'] = lib_name
+        config['mod'][mod_name]['enabled'] = False
+        config['mod'][mod_name]['priority'] = 1000
+
+    dump_config(config_path, config)
+
+
+@cli.command(context_settings=dict(
+    ignore_unknown_options=True,
+))
+@click.argument('params', nargs=-1)
+def uninstall(params):
+    """
+    Uninstall third-party Mod
+    """
+    from pip import main as pip_main
+    from pip.commands.uninstall import UninstallCommand
+
+    params = [param for param in params]
+
+    options, mod_list = UninstallCommand().parse_args(params)
+
+    params = ["uninstall"] + params
+
+    for mod_name in mod_list:
+        mod_name_index = params.index(mod_name)
+        if mod_name in system_mod:
+            print('System Mod can not be installed or uninstalled')
+            return
+        if "rqalpha_mod_" in mod_name:
+            lib_name = mod_name
+            mod_name = lib_name.replace("rqalpha_mod_", "")
+        else:
+            lib_name = "rqalpha_mod_" + mod_name
+        params[mod_name_index] = lib_name
+
+    # Uninstall Mod
+    pip_main(params)
+
+    # Remove Mod Config
+    config_path = get_default_config_path()
+    config = load_config(config_path, loader=yaml.RoundTripLoader)
+
+    for mod_name in mod_list:
+        if "rqalpha_mod_" in mod_name:
+            mod_name = mod_name.replace("rqalpha_mod_", "")
+
+        del config['mod'][mod_name]
+
+    dump_config(config_path, config)
+
+
+@cli.command()
+def list():
+    """
+    List all mod configuration
+    """
+    config_path = get_default_config_path()
+    config = load_config(config_path, loader=yaml.RoundTripLoader)
+
+    print(yaml.dump(config['mod'], Dumper=yaml.RoundTripDumper))
+
+
+@cli.command()
+@click.argument('mod_name')
+def enable(mod_name):
+    """
+    enable mod
+    """
+    if mod_name not in system_mod and "rqalpha_mod_" in mod_name:
+        mod_name = mod_name.replace("rqalpha_mod_", "")
+
+    config_path = get_default_config_path()
+    config = load_config(config_path, loader=yaml.RoundTripLoader)
+
+    try:
+        config['mod'][mod_name]['enabled'] = True
+        dump_config(config_path, config)
+    except Exception as e:
+        pass
+
+
+@cli.command()
+@click.argument('mod_name')
+def disable(mod_name):
+    """
+    disable mod
+    """
+    if mod_name not in system_mod and "rqalpha_mod_" in mod_name:
+        mod_name = mod_name.replace("rqalpha_mod_", "")
+
+    config_path = get_default_config_path()
+    config = load_config(config_path, loader=yaml.RoundTripLoader)
+
+    try:
+        config['mod'][mod_name]['enabled'] = False
+        dump_config(config_path, config)
+    except Exception as e:
+        pass
+
 
 if __name__ == '__main__':
     entry_point()

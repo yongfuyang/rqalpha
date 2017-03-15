@@ -4,6 +4,45 @@
 History
 ==================
 
+0.3.13
+==================
+
+- 增加股票裸做空的配置参数 :code:`--short-stock`
+- :code:`POSITION_EFFECT` 增加 :code:`CLOSE_TODAY`
+- :code:`ExecutionContext` 增加 :code:`get_current_close_price` :code:`get_future_commission_info`  :code:`get_future_margin` :code:`get_future_info` 函数
+- 增加 :code:`RQInvalidArgument` 来处理用户策略代码异常的问题
+- 现在可以正确提示期货主力连续合约和指数连续合约在回测和模拟中的报错信息了
+- 现在以 :code:`handle_tick(context, tick)` 的方式支持tick级别的API支持(未来可能会修改)
+- 现在回测时的 :code:`before_trading` 函数输出的时间提前到开盘前半小时
+
+0.3.12
+==================
+
+- 优化 `setup.py` 脚本，只有在 python 2 环境下才安装兼容性依赖库
+- 增加 :code:`rqalpha install/uninstall/list/enable/disable` 命令
+- 增加 :code:`EVENT.POST_SYSTEM_RESTORED` 事件
+- 增加 净值和份额的支持，现在的收益和Analyser的计算都是基于净值了。
+- 在 AnalyserMod 输出的 Trade 中增加 :code:`side` 和 :code:`position_effect`
+- 修复 :code:`total_orders` 计算错误
+- 修复 :code:`inpsect.signature` 在 python 2.x 报错的问题。
+
+0.3.11
+==================
+
+- 更新本地化翻译，修改系统提示，支持多语言
+- 增加 :code:`--locale` 默认为 :code:`cn` (中文), 支持 :code:`cn | en` (中文 | 英文)
+- 修复 :code:`main.run` 返回值中 :code:`stock_position` 为 :code:`None` 的问题
+- 修复 Windows Python 2.7 下中文显示乱码的问题
+
+0.3.10
+==================
+
+- 增加 :code:`config.yml` 的版本号检查及相关流程
+- 增加 :code:`plot` 关于中文字体的校验，如果系统没有中文字体，则显示英文字段
+- 修正 :code:`Benchmark` 在不设置时某些情况下会导致运行失败的错误
+- 修正 :code:`inspect.unwrap` 在 Python 2.7 下不支持的兼容性问题
+- 修正 :code:`numpy` 在某些平台下没有 `float128` 引起的报错问题
+
 0.3.9
 ==================
 
